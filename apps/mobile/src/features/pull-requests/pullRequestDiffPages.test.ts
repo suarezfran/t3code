@@ -184,6 +184,23 @@ describe("paged mobile pull request diffs", () => {
     expect(walk(1, ["d.ts"])).toEqual({ cursors: [null, "2"], frontier: "3" });
   });
 
+  it("pages past test-only pages until a file the screen shows loads", () => {
+    const answers = new Map<string | null, PullRequestDiffResult>([
+      [null, { ...diff("a.test.ts"), nextCursor: "2" }],
+      ["2", { ...diff("b.test.ts"), nextCursor: "3" }],
+      ["3", { ...diff("c.ts"), nextCursor: "4" }],
+      ["4", diff("d.ts")],
+    ]);
+    const read = (cursor: string | null) => answers.get(cursor) ?? null;
+    const paths = (page: PullRequestDiffPage) => [page.result.patch.split(" ")[2]!.slice(2)];
+    const cursors = (shown?: (path: string) => boolean) =>
+      walkPullRequestDiffPages(read, 1, [], paths, shown).pages.map((page) => page.cursor);
+
+    expect(cursors()).toEqual([null]);
+    expect(cursors((path) => !path.includes(".test."))).toEqual([null, "2", "3"]);
+    expect(cursors(() => false)).toEqual([null, "2", "3", "4"]);
+  });
+
   it("keeps pages loaded while seeking one file when the wanted file moves to an earlier page", () => {
     const answers = new Map<string | null, PullRequestDiffResult>([
       [null, { ...diff("a.ts"), nextCursor: "2" }],

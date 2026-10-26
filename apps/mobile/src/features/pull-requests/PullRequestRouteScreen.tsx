@@ -35,7 +35,7 @@ import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
-import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
+import { usePullRequestFileFilter, usePullRequestHideTestFiles } from "./usePullRequestFileFilter";
 import {
   handlePullRequestDiffDebugEvent,
   pullRequestDiffInitialPosition,
@@ -897,11 +897,14 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     (detail.data ?? route.params.initialSummary)?.provider,
   ).changeRequest;
   const [jumpPath, setJumpPath] = useState(route.params.path);
-  const result = usePullRequestDiff(route.params, terminology, jumpPath ? [jumpPath] : []);
-  const filter = usePullRequestFileFilter(
-    result.parsed,
-    route.params.focus ? route.params.path : undefined,
-  );
+  const includePath = route.params.focus ? route.params.path : undefined;
+  const hideTestFiles = usePullRequestHideTestFiles();
+  // Pages on past pages the filter empties, so the screen has a file to open at.
+  const result = usePullRequestDiff(route.params, terminology, jumpPath ? [jumpPath] : [], {
+    hideTestFiles,
+    includePath,
+  });
+  const filter = usePullRequestFileFilter(result.parsed, includePath);
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const { loadMore } = result;
@@ -1057,7 +1060,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     filter.toggle();
   };
   const title = commit ? "Commit changes" : "Changes";
-  const seekingFile = Boolean(jumpPath) && !requestedFile && result.nextCursor !== null;
+  const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
   return (
     <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>

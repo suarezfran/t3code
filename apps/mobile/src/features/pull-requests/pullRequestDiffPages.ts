@@ -54,8 +54,9 @@ export function getCachedPullRequestDiffPages(
 }
 
 /**
- * Follows each loaded page's next cursor until `count` pages and every wanted path have loaded.
- * `frontier` is the cursor the walk stopped on: the last page read, or the one still loading or
+ * Follows each loaded page's next cursor until `count` pages and every wanted path have loaded,
+ * and, given `shown`, until a file the screen shows has loaded: a screen with nothing to show
+ * has no scroll position to page further from. `frontier` is the cursor the walk stopped on: the last page read, or the one still loading or
  * failed. A page whose answer changed leads to its new cursors, so stale later pages drop out.
  */
 export function walkPullRequestDiffPages(
@@ -63,9 +64,11 @@ export function walkPullRequestDiffPages(
   count: number,
   wanted: readonly string[],
   paths: (page: PullRequestDiffPage) => readonly string[],
+  shown?: (path: string) => boolean,
 ): { readonly pages: readonly PullRequestDiffPage[]; readonly frontier: string | null } {
   const pages: PullRequestDiffPage[] = [];
   const missing = new Set(wanted);
+  let showing = !shown;
   const seen = new Set<string | null>();
   let cursor: string | null = null;
   for (;;) {
@@ -74,9 +77,12 @@ export function walkPullRequestDiffPages(
     if (result === null) return { pages, frontier: cursor };
     const page = { cursor, result };
     pages.push(page);
-    for (const path of paths(page)) missing.delete(path);
+    for (const path of paths(page)) {
+      missing.delete(path);
+      if (shown?.(path)) showing = true;
+    }
     const next = result.nextCursor;
-    if (next === null || seen.has(next) || (pages.length >= count && missing.size === 0))
+    if (next === null || seen.has(next) || (pages.length >= count && missing.size === 0 && showing))
       return { pages, frontier: cursor };
     cursor = next;
   }

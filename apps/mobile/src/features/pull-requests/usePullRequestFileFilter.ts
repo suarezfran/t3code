@@ -5,11 +5,14 @@ import type { ReviewParsedDiff } from "../review/reviewModel";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
 
-export function usePullRequestFileFilter(parsed: ReviewParsedDiff, includePath?: string) {
+export function usePullRequestHideTestFiles(): boolean {
   const preferences = useAtomValue(mobilePreferencesAtom);
+  return AsyncResult.isSuccess(preferences) && preferences.value.pullRequestHideTestFiles === true;
+}
+
+export function usePullRequestFileFilter(parsed: ReviewParsedDiff, includePath?: string) {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const hideTestFiles =
-    AsyncResult.isSuccess(preferences) && preferences.value.pullRequestHideTestFiles === true;
+  const hideTestFiles = usePullRequestHideTestFiles();
   const visible = useMemo(
     () => filterPullRequestTestFiles(parsed, hideTestFiles, includePath),
     [parsed, hideTestFiles, includePath],

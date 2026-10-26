@@ -20,6 +20,7 @@ import {
   requestPullRequestDiffPaths,
   walkPullRequestDiffPages,
 } from "./pullRequestDiffPages";
+import { isPullRequestTestFile } from "./pullRequestFileFilters";
 
 export type PullRequestParams = {
   readonly environmentId: string;
@@ -99,12 +100,17 @@ const parseCache = new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
 // Reads the cached pages in order and mounts the next one a reader still needs, so paging toward
 // a wanted file continues as each page lands, without the screen asking again.
 const diffPagesFamily = Atom.family((key: string) => {
-  const [target, count, wanted] = JSON.parse(key) as [
+  const [target, count, wanted, until] = JSON.parse(key) as [
     PullRequestDiffTarget,
     number,
     readonly string[],
+    PullRequestDiffShownFiles | null,
   ];
   const scope = JSON.stringify(target);
+  const shown = until
+    ? (path: string) =>
+        !until.hideTestFiles || path === until.includePath || !isPullRequestTestFile(path)
+    : undefined;
   return Atom.make((get) =>
     walkPullRequestDiffPages(
       (cursor) =>
@@ -117,17 +123,28 @@ const diffPagesFamily = Atom.family((key: string) => {
         const parsed = parsePullRequestDiffPage(page, parseCache, scope);
         return parsed.kind === "files" ? parsed.files.map((file) => file.path) : [];
       },
+      shown,
     ),
   );
 });
 
 const NO_PATHS: readonly string[] = [];
 
-/** `wantedPaths` keeps paging until those files have loaded or the diff ends. */
+/** The test file filter a screen applies, as `usePullRequestFileFilter` takes it. */
+export interface PullRequestDiffShownFiles {
+  readonly hideTestFiles: boolean;
+  readonly includePath?: string | undefined;
+}
+
+/**
+ * `wantedPaths` keeps paging until those files have loaded or the diff ends, and `shownFiles`
+ * until a file that filter keeps has loaded.
+ */
 export function usePullRequestDiff(
   params: PullRequestDiffParams,
   terminology: ChangeRequestTerminology,
   wantedPaths: readonly string[] = NO_PATHS,
+  shownFiles?: PullRequestDiffShownFiles,
 ) {
   const reference = pullRequestTarget(params);
   const target: PullRequestDiffTarget = {
@@ -143,7 +160,9 @@ export function usePullRequestDiff(
   const requested = requestPullRequestDiffPaths(stored, key, wantedPaths);
   if (requested !== stored) setRequested(requested);
   const { pages, frontier } = useAtomValue(
-    diffPagesFamily(JSON.stringify([target, requested.count, requested.wanted])),
+    diffPagesFamily(
+      JSON.stringify([target, requested.count, requested.wanted, shownFiles ?? null]),
+    ),
   );
   const query = useEnvironmentQuery(composerPullRequests.diff(pageTarget(target, frontier)));
   const parsed = getCachedPullRequestDiffPages(pages, key, terminology, parseCache);
