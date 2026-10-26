@@ -15,9 +15,11 @@ import { useEnvironmentQuery } from "../../state/query";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 import {
+  createPullRequestDiffPagesMemory,
   getCachedPullRequestDiffPages,
   parsePullRequestDiffPage,
   requestPullRequestDiffPaths,
+  type PullRequestDiffPagesMemory,
   walkPullRequestDiffPages,
 } from "./pullRequestDiffPages";
 import { isPullRequestTestFile } from "./pullRequestFileFilters";
@@ -97,6 +99,9 @@ const pageTarget = (target: PullRequestDiffTarget, cursor: string | null) => ({
 // Pages parse once however many readers combine them; each answer is its own object.
 const parseCache = new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
 
+// Shared by every walk of one diff, which may stop at different depths.
+const pageMemories = new Map<string, PullRequestDiffPagesMemory>();
+
 // Reads the cached pages in order and mounts the next one a reader still needs, so paging toward
 // a wanted file continues as each page lands, without the screen asking again.
 const diffPagesFamily = Atom.family((key: string) => {
@@ -111,12 +116,13 @@ const diffPagesFamily = Atom.family((key: string) => {
     ? (path: string) =>
         !until.hideTestFiles || path === until.includePath || !isPullRequestTestFile(path)
     : undefined;
-  return Atom.make((get) =>
-    walkPullRequestDiffPages(
-      (cursor) =>
-        Option.getOrNull(
-          AsyncResult.value(get(composerPullRequests.diff(pageTarget(target, cursor)))),
-        ),
+  let memory = pageMemories.get(scope);
+  if (!memory) pageMemories.set(scope, (memory = createPullRequestDiffPagesMemory()));
+  return Atom.make((get) => {
+    const pageAtom = (cursor: string | null) =>
+      composerPullRequests.diff(pageTarget(target, cursor));
+    const walk = walkPullRequestDiffPages(
+      (cursor) => Option.getOrNull(AsyncResult.value(get(pageAtom(cursor)))),
       count,
       wanted,
       (page) => {
@@ -124,8 +130,12 @@ const diffPagesFamily = Atom.family((key: string) => {
         return parsed.kind === "files" ? parsed.files.map((file) => file.path) : [];
       },
       shown,
-    ),
-  );
+      memory,
+    );
+    const { reload } = walk;
+    if (reload !== undefined) queueMicrotask(() => get.refresh(pageAtom(reload)));
+    return walk;
+  });
 });
 
 const NO_PATHS: readonly string[] = [];

@@ -7,6 +7,7 @@ import {
   combinePullRequestDiffPages,
   getCachedPullRequestDiffPages,
   requestPullRequestDiffPaths,
+  createPullRequestDiffPagesMemory,
   walkPullRequestDiffPages,
   type PullRequestDiffPage,
 } from "./pullRequestDiffPages";
@@ -182,6 +183,32 @@ describe("paged mobile pull request diffs", () => {
     expect(walk(1, ["gone.ts"])).toEqual({ cursors: [null, "2", "3", "4"], frontier: "4" });
     answers.delete("3");
     expect(walk(1, ["d.ts"])).toEqual({ cursors: [null, "2"], frontier: "3" });
+  });
+
+  it("holds a later page from before an earlier page changed until it reloads", () => {
+    const answers = new Map<string | null, PullRequestDiffResult>([
+      [null, { ...diff("a.ts"), nextCursor: "2" }],
+      ["2", { ...diff("b.ts"), nextCursor: "3" }],
+      ["3", diff("c.ts")],
+    ]);
+    const read = (cursor: string | null) => answers.get(cursor) ?? null;
+    const known = createPullRequestDiffPagesMemory();
+    const walk = () => walkPullRequestDiffPages(read, 3, [], () => [], undefined, known);
+
+    expect(walk().pages).toHaveLength(3);
+    answers.set(null, { ...diff("a2.ts"), nextCursor: "2" });
+    expect(walk()).toMatchObject({ frontier: "2", reload: "2" });
+    const held = walk();
+    expect([held.frontier, held.reload]).toEqual(["2", undefined]);
+    answers.set("2", { ...diff("b2.ts"), nextCursor: "3" });
+    expect(walk()).toMatchObject({ frontier: "3", reload: "3" });
+    answers.set("3", diff("c.ts"));
+    const { pages } = walk();
+    expect(pages.map((page) => page.result.patch)).toEqual([
+      answers.get(null)!.patch,
+      answers.get("2")!.patch,
+      diff("c.ts").patch,
+    ]);
   });
 
   it("pages past test-only pages until a file the screen shows loads", () => {

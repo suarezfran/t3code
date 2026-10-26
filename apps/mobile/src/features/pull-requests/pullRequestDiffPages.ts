@@ -54,10 +54,33 @@ export function getCachedPullRequestDiffPages(
 }
 
 /**
- * Follows each loaded page's next cursor until `count` pages and every wanted path have loaded,
- * and, given `shown`, until a file the screen shows has loaded: a screen with nothing to show
- * has no scroll position to page further from. `frontier` is the cursor the walk stopped on: the last page read, or the one still loading or
- * failed. A page whose answer changed leads to its new cursors, so stale later pages drop out.
+ * What a walk saw last time. Some hosts' cursors are bare page numbers, so a later page cached
+ * before an earlier page changed still matches its cursor; such a page is held until it reloads.
+ */
+export interface PullRequestDiffPagesMemory {
+  readonly results: Map<string | null, PullRequestDiffResult>;
+  readonly stale: WeakSet<PullRequestDiffResult>;
+  readonly reloading: WeakSet<PullRequestDiffResult>;
+}
+
+export function createPullRequestDiffPagesMemory(): PullRequestDiffPagesMemory {
+  return { results: new Map(), stale: new WeakSet(), reloading: new WeakSet() };
+}
+
+function samePullRequestDiffPage(a: PullRequestDiffResult, b: PullRequestDiffResult): boolean {
+  return (
+    a === b ||
+    (a.patch === b.patch &&
+      a.truncated === b.truncated &&
+      a.nextCursor === b.nextCursor &&
+      JSON.stringify(a.omittedFileStats ?? []) === JSON.stringify(b.omittedFileStats ?? []))
+  );
+}
+
+/**
+ * Follows next cursors until `count` pages, every wanted path, and (given `shown`) one shown file
+ * have loaded. `frontier` is the cursor it stopped on: the last page read, or one loading, failed,
+ * or held as stale. `reload` names a page that just went stale, for the caller to refetch.
  */
 export function walkPullRequestDiffPages(
   read: (cursor: string | null) => PullRequestDiffResult | null,
@@ -65,16 +88,35 @@ export function walkPullRequestDiffPages(
   wanted: readonly string[],
   paths: (page: PullRequestDiffPage) => readonly string[],
   shown?: (path: string) => boolean,
-): { readonly pages: readonly PullRequestDiffPage[]; readonly frontier: string | null } {
+  memory?: PullRequestDiffPagesMemory,
+): {
+  readonly pages: readonly PullRequestDiffPage[];
+  readonly frontier: string | null;
+  readonly reload?: string | null | undefined;
+} {
   const pages: PullRequestDiffPage[] = [];
   const missing = new Set(wanted);
-  let showing = !shown;
   const seen = new Set<string | null>();
+  let showing = !shown;
   let cursor: string | null = null;
   for (;;) {
     seen.add(cursor);
     const result = read(cursor);
     if (result === null) return { pages, frontier: cursor };
+    if (memory) {
+      if (memory.stale.has(result)) {
+        if (memory.reloading.has(result)) return { pages, frontier: cursor };
+        memory.reloading.add(result);
+        return { pages, frontier: cursor, reload: cursor };
+      }
+      const previous = memory.results.get(cursor);
+      memory.results.set(cursor, result);
+      // Every page remembered past this one may come from the old answer, whichever reader
+      // walked that far.
+      if (previous !== undefined && !samePullRequestDiffPage(previous, result))
+        for (const [other, answer] of memory.results)
+          if (!seen.has(other)) memory.stale.add(answer);
+    }
     const page = { cursor, result };
     pages.push(page);
     for (const path of paths(page)) {
